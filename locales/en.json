@@ -1,0 +1,20 @@
+{
+    "error": {
+        "title": "City Hall",
+        "not_enough_money": "You don't have enough cash to purchase this license",
+        "already_have_license": "You already own this license",
+        "not_near_cityhall": "You must be near City Hall to purchase licenses",
+        "invalid_license": "That is not a valid license type"
+    },
+    "success": {
+        "title": "City Hall",
+        "license_purchased": "You have successfully purchased: "
+    },
+    "info": {
+        "cityhall": "City Hall",
+        "licenses": "Licenses",
+        "open_cityhall": "[E] Open City Hall",
+        "target_open_cityhall": "Open City Hall",
+        "obtain_licenses": "Purchase official documents and licenses"
+    }
+}
