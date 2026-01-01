@@ -1,6 +1,17 @@
 return {
-    -- Interaction method: true = ox_target, false = ZSX points
-    useTarget = true,
+    -- Interaction method:
+    -- 'target' = ox_target (click NPC/point directly)
+    -- 'textui' = Text UI prompt (E-key, classic style)
+    interactionMethod = 'target',
+
+    -- Interaction range for ox_target (in meters)
+    targetRange = 2.5,
+
+    -- Interaction range for text UI (in meters)
+    textUIRange = 15,
+
+    -- Interaction range for fraud locations (in meters) - for ox_target
+    fraudTargetRange = 1.5,
 
     -- NPCs at City Hall locations
     peds = {

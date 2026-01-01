@@ -2,26 +2,9 @@ local config = require 'config.client'
 local sharedConfig = require 'config.shared'
 
 -- State tracking
-local playerNearPed = false
-local pedsSpawned = false
 local blips = {}
-
---- Gets the closest city hall location
-local function getClosestCityhall()
-    local playerCoords = GetEntityCoords(cache.ped)
-    local closestIndex = 1
-    local closestDistance = #(playerCoords - sharedConfig.cityhalls[1].coords)
-
-    for i = 2, #sharedConfig.cityhalls do
-        local distance = #(playerCoords - sharedConfig.cityhalls[i].coords)
-        if distance < closestDistance then
-            closestDistance = distance
-            closestIndex = i
-        end
-    end
-
-    return closestIndex, closestDistance
-end
+local points = {} -- Interaction points for textui
+local peds = {} -- Spawned PEDs
 
 --- Checks if player has license item in inventory
 --- @param item string - Item name to check
@@ -42,7 +25,6 @@ end
 
 --- Opens the main license purchase menu
 local function openLicenseMenu()
-    local closestIndex = getClosestCityhall()
     local options = {}
 
     -- Build menu options for each available license
@@ -60,23 +42,16 @@ local function openLicenseMenu()
             icon = 'fa-solid fa-id-card',
             args = licenseKey,
             onSelect = function(args)
-                -- Trigger purchase on server with error handling
                 TriggerServerEvent('qbx_cityhall:server:purchaseLicense', args)
             end,
         }
     end
 
-    -- Use ZSX-UI context menu
     lib.registerContext({
         id = 'cityhall_licenses',
-        title = locale('info.licenses'),
+        title = 'Licenses',
         menu = 'cityhall_main',
         options = options,
-        onExit = function()
-            if playerNearPed then
-                lib.showTextUI(locale('info.open_cityhall'))
-            end
-        end,
     })
 
     lib.showContext('cityhall_licenses')
@@ -86,8 +61,8 @@ end
 local function openMainMenu()
     local options = {
         {
-            title = locale('info.licenses'),
-            description = locale('info.obtain_licenses'),
+            title = 'Licenses',
+            description = 'Purchase licenses',
             icon = 'fa-solid fa-scroll',
             onSelect = function()
                 openLicenseMenu()
@@ -95,16 +70,10 @@ local function openMainMenu()
         },
     }
 
-    -- Register main context menu
     lib.registerContext({
         id = 'cityhall_main',
-        title = locale('info.cityhall'),
+        title = 'City Hall',
         options = options,
-        onExit = function()
-            if playerNearPed then
-                lib.showTextUI(locale('info.open_cityhall'))
-            end
-        end,
     })
 
     lib.showContext('cityhall_main')
@@ -113,133 +82,158 @@ end
 --- Creates a blip for a city hall location
 local function createBlip(cityhall)
     local blip = AddBlipForCoord(cityhall.coords.x, cityhall.coords.y, cityhall.coords.z)
-    SetBlipSprite(blip, cityhall.blip.sprite or 1)
+    SetBlipSprite(blip, cityhall.blip.sprite or 487)
     SetBlipDisplay(blip, cityhall.blip.display or 4)
-    SetBlipScale(blip, cityhall.blip.scale or 1.0)
-    SetBlipColour(blip, cityhall.blip.colour or 1)
-    SetBlipAsShortRange(blip, cityhall.blip.shortRange or false)
+    SetBlipScale(blip, cityhall.blip.scale or 0.65)
+    SetBlipColour(blip, cityhall.blip.colour or 0)
+    
     BeginTextCommandSetBlipName('STRING')
-    AddTextComponentString(cityhall.blip.label or locale('info.cityhall'))
+    AddTextComponentString(cityhall.blip.label or 'City Hall')
     EndTextCommandSetBlipName(blip)
+    
     return blip
 end
 
+--- Initializes blips for all city halls
+local function initBlips()
+    for i = 1, #sharedConfig.cityhalls do
+        local cityhall = sharedConfig.cityhalls[i]
+        if cityhall.showBlip and cityhall.blip then
+            blips[#blips + 1] = createBlip(cityhall)
+        end
+    end
+end
+
+--- Removes all blips
 local function deleteBlips()
-    if not blips then return end
     for i = 1, #blips do
-        local blip = blips[i]
-        if DoesBlipExist(blip) then
-            RemoveBlip(blip)
+        if DoesBlipExist(blips[i]) then
+            RemoveBlip(blips[i])
         end
     end
     blips = {}
 end
 
-local function initBlips()
-    for i = 1, #sharedConfig.cityhalls do
-        local cityhall = sharedConfig.cityhalls[i]
-
-        if not cityhall.showBlip or not cityhall.blip then return end
-
-        blips[#blips + 1] = createBlip({blip = cityhall.blip, coords = cityhall.coords})
-    end
-end
-
-
---- Spawns city hall NPCs and sets up interactions
+--- Spawns city hall NPCs and sets up interactions (BOTH METHODS)
 local function spawnPeds()
-    if not config.peds or not next(config.peds) or pedsSpawned then return end
+    if not config.peds or not next(config.peds) then return end
+
     for i = 1, #config.peds do
-        local current = config.peds[i]
-        current.model = type(current.model) == 'string' and joaat(current.model) or current.model
-        lib.requestModel(current.model, 5000)
-        local ped = CreatePed(0, current.model, current.coords.x, current.coords.y, current.coords.z, current.coords.w, false, false)
-        SetModelAsNoLongerNeeded(current.model)
+        local pedConfig = config.peds[i]
+        local model = type(pedConfig.model) == 'string' and joaat(pedConfig.model) or pedConfig.model
+
+        lib.requestModel(model, 5000)
+        
+        local ped = CreatePed(4, model, pedConfig.coords.x, pedConfig.coords.y, pedConfig.coords.z, pedConfig.coords.w, false, false)
+        SetModelAsNoLongerNeeded(model)
         FreezeEntityPosition(ped, true)
         SetEntityInvincible(ped, true)
         SetBlockingOfNonTemporaryEvents(ped, true)
-        TaskStartScenarioInPlace(ped, current.scenario, 0, true)
-        current.pedHandle = ped
-        if config.useTarget then
-            exports.ox_target:addLocalEntity(ped, {{
-                name = 'cityhall_main' .. i,
-                icon = 'fa-solid fa-city',
-                label = locale('info.target_open_cityhall'),
-                distance = 1.5,
-                debug = true,
-                onSelect = function()
-                    inRangeCityhall = true
-                    openMainMenu()
-                end
-            }})
-        else
-            local options = current.zoneOptions
-            if options then
-                lib.zones.box({
-                    name = 'cityhall',
-                    coords = current.coords.xyz,
-                    size = vec3(2, 2, 3),
-                    rotation = current.coords.w,
-                    debug = false,
-                    onEnter = function()
-                        inRangeCityhall = true
-                        lib.showTextUI(locale('info.open_cityhall'))
+        TaskStartScenarioInPlace(ped, pedConfig.scenario, 0, true)
+
+        if config.interactionMethod == 'target' then
+            -- Use ox_target for interaction
+            exports.ox_target:addLocalEntity(ped, {
+                {
+                    name = 'cityhall_open',
+                    icon = 'fa-solid fa-city',
+                    label = 'Open City Hall',
+                    distance = config.targetRange,
+                    onSelect = function()
+                        openMainMenu()
                     end,
-                    onExit = function()
-                        lib.hideTextUI()
-                        inRangeCityhall = false
-                    end,
-                    inside = function()
-                        if IsControlJustPressed(0, 38) then
-                            openCityhallMenu()
-                            lib.hideTextUI()
-                        end
-                    end,
-                })
-            end
+                },
+            })
         end
+        
+        peds[i] = ped
     end
-    pedsSpawned = true
 end
 
+--- Delete spawned PEDs
 local function deletePeds()
-    if not config.peds or not next(config.peds) or not pedsSpawned then return end
-    for i = 1, #config.peds do
-        local current = config.peds[i]
-        if current.pedHandle then
-            DeletePed(current.pedHandle)
+    for i = 1, #peds do
+        if peds[i] and DoesEntityExist(peds[i]) then
+            DeleteEntity(peds[i])
         end
+    end
+    peds = {}
+end
+
+--- Create interaction points for all city halls (TEXTUI METHOD - uses PED location)
+local function createCityHallPoints()
+    if config.interactionMethod ~= 'textui' then return end
+    
+    print('^2[CityHall]^7 Creating textui points for ' .. #config.peds .. ' peds')
+    
+    for i = 1, #config.peds do
+        local pedConfig = config.peds[i]
+        local pedCoords = vec3(pedConfig.coords.x, pedConfig.coords.y, pedConfig.coords.z)
+        
+        print('^2[CityHall]^7 Creating point at ped location: ' .. tostring(pedCoords))
+        
+        points[i] = lib.points.new({
+            coords = pedCoords,
+            distance = config.textUIRange,
+            onEnter = function()
+                print('^2[CityHall]^7 Entered point range')
+                lib.showTextUI('[E] Open City Hall')
+            end,
+            onExit = function()
+                print('^2[CityHall]^7 Exited point range')
+                lib.hideTextUI()
+            end,
+            nearby = function()
+                if IsControlJustPressed(0, 38) then -- E key
+                    print('^2[CityHall]^7 E key pressed, opening menu')
+                    openMainMenu()
+                    lib.hideTextUI()
+                end
+            end,
+        })
     end
 end
 
+--- Remove all interaction points
+local function removeCityHallPoints()
+    for i = 1, #points do
+        if points[i] then
+            points[i]:remove()
+        end
+    end
+    points = {}
+end
 
 --- Handle player loaded event
 RegisterNetEvent('QBCore:Client:OnPlayerLoaded', function()
+    print('^2[CityHall]^7 Player loaded, interaction method: ' .. config.interactionMethod)
     initBlips()
     spawnPeds()
+    createCityHallPoints()
 end)
 
 --- Handle resource start
 AddEventHandler('onResourceStart', function(resource)
     if resource ~= cache.resource then return end
+    print('^2[CityHall]^7 Resource started, interaction method: ' .. config.interactionMethod)
     initBlips()
     spawnPeds()
+    createCityHallPoints()
 end)
 
 --- Handle player unload
 RegisterNetEvent('QBCore:Client:OnPlayerUnload', function()
+    print('^2[CityHall]^7 Player unloaded')
     deleteBlips()
     deletePeds()
+    removeCityHallPoints()
 end)
 
 --- Handle resource stop
 AddEventHandler('onResourceStop', function(resource)
     if resource ~= cache.resource then return end
+    print('^2[CityHall]^7 Resource stopped')
     deleteBlips()
     deletePeds()
-end)
-
---- Update player data on inventory change (refresh license status)
-RegisterNetEvent('inventory:itemUpdate', function()
-    -- License status will be re-checked when menu opens
+    removeCityHallPoints()
 end)

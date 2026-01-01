@@ -208,19 +208,23 @@ end)
 --- Export: Check if player has BOTH inventory item AND valid metadata (strict)
 --- Use this for weapon shops and critical license checks
 exports('hasValidLicense', function(source, licenseKey)
-    if not sharedConfig.licenses[licenseKey] then return false end
+    -- Check if this is a real license or forged license
+    local realLicense = sharedConfig.licenses[licenseKey]
+    local forgedLicense = sharedConfig.forgedLicenses[licenseKey]
     
-    local licenseData = sharedConfig.licenses[licenseKey]
+    if not realLicense and not forgedLicense then return false end
+    
     local player = exports['qbx_core']:GetPlayer(source)
     if not player then return false end
 
-    -- Check if player has the physical item in inventory
+    -- Check if player has EITHER the real or forged license item in inventory
     local hasItem = false
     if GetResourceState('ox_inventory') == 'started' then
         local items = exports['ox_inventory']:GetInventoryItems(source)
         if items then
             for _, item in ipairs(items) do
-                if item.name == licenseData.item then
+                if (realLicense and item.name == realLicense.item) or 
+                   (forgedLicense and item.name == forgedLicense.item) then
                     hasItem = true
                     break
                 end
@@ -234,7 +238,7 @@ exports('hasValidLicense', function(source, licenseKey)
         hasMetadata = true
     end
 
-    -- BOTH must be true for a valid license
+    -- BOTH must be true for a valid license (works for both real and forged)
     return hasItem and hasMetadata
 end)
 
@@ -247,38 +251,101 @@ exports('hasLicenseAny', function(source, licenseKey)
     return playerHasLicense(source, licenseData.item)
 end)
 
---- Thread: Sync metadata licenses with actual inventory every 5 seconds
---- Ensures metadata stays in sync with physical inventory
-CreateThread(function()
-    while true do
-        Wait(5000) -- Check every 5 seconds
+--- Thread: Lightweight sync - only check players who just joined or lost items (event-driven)
+--- Falls back to slow sync for safety (every 30 seconds for stragglers)
+local licenseCheckQueue = {}
+
+local function syncPlayerLicenses(playerId)
+    local player = exports['qbx_core']:GetPlayer(playerId)
+    if not player or not player.PlayerData or not player.PlayerData.metadata then return end
+    
+    if not player.PlayerData.metadata.licences then
+        player.PlayerData.metadata.licences = {}
+    end
+    
+    -- Build list of all license keys once
+    local allLicenseKeys = {}
+    for licenseKey, _ in pairs(sharedConfig.licenses) do
+        allLicenseKeys[licenseKey] = true
+    end
+    for licenseKey, _ in pairs(sharedConfig.forgedLicenses) do
+        allLicenseKeys[licenseKey] = true
+    end
+    
+    for licenseKey, _ in pairs(allLicenseKeys) do
+        local realLicense = sharedConfig.licenses[licenseKey]
+        local forgedLicense = sharedConfig.forgedLicenses[licenseKey]
         
-        local players = GetPlayers()
-        for _, playerId in ipairs(players) do
-            local player = exports['qbx_core']:GetPlayer(tonumber(playerId))
-            if player and player.PlayerData.metadata and player.PlayerData.metadata.licences then
-                -- Check each license
-                for licenseKey, licenseData in pairs(sharedConfig.licenses) do
-                    local licenseValid = player.PlayerData.metadata.licences[licenseKey] or false
-                    local hasItem = hasItemInInventory(tonumber(playerId), licenseData.item)
-                    
-                    -- If metadata says player has license but item is gone - revoke it
-                    if licenseValid and not hasItem then
-                        player.PlayerData.metadata.licences[licenseKey] = false
-                        player.Functions.SetMetaData('licences', player.PlayerData.metadata.licences)
-                        
-                        exports['qbx_core']:Notify(tonumber(playerId), 'Your ' .. licenseData.label .. ' is no longer valid. License revoked.', 'error')
-                        print('^3[CityHall]^7 Player ' .. GetPlayerName(tonumber(playerId)) .. ' lost ' .. licenseData.label .. ' - License auto-revoked')
-                    end
-                    
-                    -- If metadata says no license but item exists - grant it
-                    if not licenseValid and hasItem then
-                        player.PlayerData.metadata.licences[licenseKey] = true
-                        player.Functions.SetMetaData('licences', player.PlayerData.metadata.licences)
-                        
-                        print('^2[CityHall]^7 Player ' .. GetPlayerName(tonumber(playerId)) .. ' recovered ' .. licenseData.label .. ' - License auto-granted')
-                    end
-                end
+        local licenseValid = player.PlayerData.metadata.licences[licenseKey] or false
+        
+        -- Check if player has EITHER the real or forged license item
+        local hasItem = false
+        if realLicense then
+            hasItem = hasItemInInventory(playerId, realLicense.item) or hasItem
+        end
+        if forgedLicense then
+            hasItem = hasItemInInventory(playerId, forgedLicense.item) or hasItem
+        end
+        
+        -- If metadata says player has license but item is gone - revoke it
+        if licenseValid and not hasItem then
+            player.PlayerData.metadata.licences[licenseKey] = false
+            player.Functions.SetMetaData('licences', player.PlayerData.metadata.licences)
+            
+            local licenseLabel = (realLicense and realLicense.label) or (forgedLicense and forgedLicense.label) or licenseKey
+            exports['qbx_core']:Notify(playerId, 'Your ' .. licenseLabel .. ' is no longer valid. License revoked.', 'error')
+            print('^3[CityHall]^7 Player ' .. GetPlayerName(playerId) .. ' lost ' .. licenseLabel .. ' - License auto-revoked')
+        end
+        
+        -- If metadata says no license but item exists - grant it
+        if not licenseValid and hasItem then
+            player.PlayerData.metadata.licences[licenseKey] = true
+            player.Functions.SetMetaData('licences', player.PlayerData.metadata.licences)
+            
+            local licenseLabel = (realLicense and realLicense.label) or (forgedLicense and forgedLicense.label) or licenseKey
+            print('^2[CityHall]^7 Player ' .. GetPlayerName(playerId) .. ' recovered ' .. licenseLabel .. ' - License auto-granted')
+        end
+    end
+end
+
+--- Event: Sync when player joins (loads character)
+AddEventHandler('qbx_core:playerLoaded', function(playerId)
+    licenseCheckQueue[playerId] = true
+end)
+
+--- Event: Sync when inventory changes (licenses added/removed)
+RegisterNetEvent('qbx_inventory:itemsChanged', function()
+    licenseCheckQueue[source] = true
+end)
+
+--- Event: Clean up when player drops
+AddEventHandler('playerDropped', function()
+    licenseCheckQueue[source] = nil
+end)
+
+--- Thread: Process license queue and fallback sync
+CreateThread(function()
+    Wait(10000) -- Wait 10 seconds before starting sync (allow player to fully load)
+    
+    local lastFullSync = 0
+    
+    while true do
+        Wait(100) -- Check queue frequently, but only process queued players
+        
+        -- Process queued players (event-driven)
+        for playerId, _ in pairs(licenseCheckQueue) do
+            if GetPlayerState(playerId) then
+                syncPlayerLicenses(tonumber(playerId))
+                licenseCheckQueue[playerId] = nil
+            end
+        end
+        
+        -- Fallback: Full sync every 30 seconds (catches edge cases)
+        if GetGameTimer() - lastFullSync > 30000 then
+            lastFullSync = GetGameTimer()
+            local players = GetPlayers()
+            for _, playerId in ipairs(players) do
+                syncPlayerLicenses(tonumber(playerId))
             end
         end
     end

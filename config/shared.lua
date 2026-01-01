@@ -44,4 +44,63 @@ return {
             cost = 250,
         },
     },
+
+    -- Fraud system: Locations where players can forge licenses
+    fraudLocations = {
+        {
+            name = 'Downtown Forge',
+            coords = vec3(127.83, -1028.83, 28.45),
+            showBlip = true,
+            blip = {
+                label = 'License Forge',
+                sprite = 227,  -- Camera icon (suspicious)
+                display = 4,
+                scale = 0.6,
+                colour = 1,  -- Red
+            },
+        },
+        -- Add more locations as needed
+    },
+
+    -- Forged license definitions
+    -- These operate exactly like regular licenses but with different item names
+    forgedLicenses = {
+        
+        ['classa'] = {
+            item = 'fvoucher_a',
+            label = 'Forged Class [A] License',
+            requiredItems = {
+                { item = 'plastic', amount = 3 },
+                { item = 'ink_cartridge', amount = 2 },
+                { item = 'card_empty', amount = 1 },
+            },
+        },
+        ['classb'] = {
+            item = 'fvoucher_b',
+            label = 'Forged Class [B] License',
+            requiredItems = {
+                { item = 'plastic', amount = 3 },
+                { item = 'ink_cartridge', amount = 2 },
+                { item = 'card_empty', amount = 1 },
+            },
+        },
+        ['classc'] = {
+            item = 'fvoucher_c',
+            label = 'Forged Class [C] License',
+            requiredItems = {
+                { item = 'plastic', amount = 3 },
+                { item = 'ink_cartridge', amount = 2 },
+                { item = 'card_empty', amount = 1 },
+            },
+        },
+        ['classd'] = {
+            item = 'fvoucher_d',
+            label = 'Forged Class [D] License',
+            requiredItems = {
+                { item = 'plastic', amount = 3 },
+                { item = 'ink_cartridge', amount = 2 },
+                { item = 'card_empty', amount = 1 },
+            },
+        },
+    },
 }
